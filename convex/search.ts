@@ -1,7 +1,7 @@
 "use node";
 
 import { v } from "convex/values";
-import { action, query } from "./_generated/server";
+import { action } from "./_generated/server";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _internal: any;
@@ -54,37 +54,5 @@ export const searchVideos = action({
     );
 
     return enrichedResults.filter(Boolean);
-  },
-});
-
-export const getRecentVideos = query({
-  args: { userId: v.id("users") },
-  handler: async (ctx, args) => {
-    const videos = await ctx.db
-      .query("videos")
-      .withIndex("by_userId_createdAt", (q) => q.eq("userId", args.userId))
-      .order("desc")
-      .take(20);
-
-    const enriched = await Promise.all(
-      videos.map(async (video) => {
-        const creator = await ctx.db.get(video.creatorId);
-        const transcript = await ctx.db
-          .query("transcripts")
-          .withIndex("by_videoId", (q) => q.eq("videoId", video._id))
-          .first();
-        return {
-          ...video,
-          creator: creator
-            ? { handle: creator.handle, platform: creator.platform, displayName: creator.displayName }
-            : null,
-          transcript: transcript
-            ? { firstTwoSentences: transcript.firstTwoSentences, fullText: transcript.fullText }
-            : null,
-        };
-      })
-    );
-
-    return enriched;
   },
 });

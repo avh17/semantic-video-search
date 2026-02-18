@@ -59,7 +59,7 @@ type SearchResult = {
 export default function SearchPage() {
   const { userId } = useSession();
   const creators = useQuery(api.creators.list, { userId });
-  const recentVideos = useQuery(api.search.getRecentVideos, { userId });
+  const recentVideos = useQuery(api.searchHelpers.getRecentVideos, { userId });
   const createVideo = useMutation(api.videos.create);
   const processVideo = useAction(api.ingest.processVideo);
   const searchVideos = useAction(api.search.searchVideos);
