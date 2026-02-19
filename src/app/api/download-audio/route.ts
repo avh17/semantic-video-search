@@ -11,12 +11,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const cobaltKey = process.env.COBALT_API_KEY;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (cobaltKey) {
+      headers["Authorization"] = `Api-Key ${cobaltKey}`;
+    }
+
     const response = await fetch("https://api.cobalt.tools/", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers,
       body: JSON.stringify({
         url: videoUrl,
         downloadMode: "audio",
@@ -25,10 +31,18 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Cobalt API error:", errorText);
+      const errorBody = await response.text();
+      console.error("Cobalt API error body:", errorBody);
+      // Try to parse the body for a useful message
+      let detail = response.statusText;
+      try {
+        const parsed = JSON.parse(errorBody);
+        detail = parsed?.error?.code ?? parsed?.text ?? parsed?.error ?? detail;
+      } catch {
+        detail = errorBody || detail;
+      }
       return NextResponse.json(
-        { error: `Cobalt API error: ${response.statusText}` },
+        { error: `Cobalt: ${detail}` },
         { status: response.status }
       );
     }

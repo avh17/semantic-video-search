@@ -1,5 +1,21 @@
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, mutation } from "./_generated/server";
+
+// Generate a short-lived upload URL for the client to POST a media file to Convex storage
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+// Delete a file from Convex storage (cleanup after transcription)
+export const deleteStorageFile = internalMutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, args) => {
+    await ctx.storage.delete(args.storageId);
+  },
+});
 
 export const createTranscript = internalMutation({
   args: {

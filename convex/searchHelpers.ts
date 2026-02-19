@@ -20,6 +20,7 @@ export const getSearchResultData = internalQuery({
       video: {
         _id: video._id,
         videoUrl: video.videoUrl,
+        thumbnailUrl: video.thumbnailUrl,
         platform: video.platform,
         caption: video.caption,
         processingStatus: video.processingStatus,

@@ -22,11 +22,14 @@ export const processVideo = action({
     videoId: v.id("videos"),
     userId: v.id("users"),
     videoUrl: v.string(),
-    appUrl: v.string(),
+    // Provide either audioUrl (public URL) or storageId (Convex storage)
+    audioUrl: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")), // uploaded by client; deleted after processing
     openaiApiKey: v.string(),
   },
   handler: async (ctx, args) => {
-    const { videoId, userId, videoUrl, appUrl, openaiApiKey } = args;
+    const { videoId, userId, openaiApiKey } = args;
+    let storageId = args.storageId;
 
     try {
       // Step 1: Mark as processing
@@ -35,29 +38,38 @@ export const processVideo = action({
         processingStatus: "processing",
       });
 
-      // Step 2: Download audio via our API route
-      const downloadRes = await fetch(`${appUrl}/api/download-audio`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoUrl }),
-      });
-
-      if (!downloadRes.ok) {
-        const errorData = await downloadRes.json().catch(() => ({}));
-        throw new Error(
-          `Audio download failed: ${(errorData as { error?: string }).error || downloadRes.statusText}`
-        );
+      // Step 2: Resolve the media URL
+      // If storageId is given, get the Convex storage URL; otherwise use audioUrl directly
+      let resolvedUrl: string;
+      if (storageId) {
+        const url = await ctx.storage.getUrl(storageId);
+        if (!url) throw new Error("Could not get storage URL for uploaded file");
+        resolvedUrl = url;
+      } else if (args.audioUrl) {
+        resolvedUrl = args.audioUrl;
+      } else {
+        throw new Error("Either audioUrl or storageId must be provided");
       }
 
-      const { audioUrl } = (await downloadRes.json()) as { audioUrl: string };
-
-      // Step 3: Fetch the audio file and send to Whisper
-      const audioRes = await fetch(audioUrl);
+      // Step 3: Fetch the media file and send to Whisper
+      const audioRes = await fetch(resolvedUrl);
       if (!audioRes.ok) {
-        throw new Error("Failed to fetch audio file from URL");
+        throw new Error(`Failed to fetch media file from URL: ${audioRes.status}`);
       }
       const audioBlob = await audioRes.blob();
-      const audioFile = new File([audioBlob], "audio.mp3", { type: "audio/mpeg" });
+      // Detect MIME type from response headers or URL extension
+      const contentType = audioRes.headers.get("content-type") ?? "";
+      let mimeType = "audio/mpeg";
+      let fileName = "audio.mp3";
+      if (
+        contentType.includes("video/mp4") ||
+        contentType.includes("video/") ||
+        resolvedUrl.includes(".mp4")
+      ) {
+        mimeType = "video/mp4";
+        fileName = "video.mp4";
+      }
+      const audioFile = new File([audioBlob], fileName, { type: mimeType });
 
       const OpenAI = (await import("openai")).default;
       const openai = new OpenAI({ apiKey: openaiApiKey });
@@ -98,7 +110,12 @@ export const processVideo = action({
         processingStatus: "completed",
       });
 
-      // Step 8: Cleanup old videos
+      // Step 8: Delete uploaded file from Convex storage (if applicable)
+      if (storageId) {
+        await ctx.runMutation(internal.ingestHelpers.deleteStorageFile, { storageId });
+      }
+
+      // Step 9: Cleanup old videos
       await ctx.runMutation(internal.cleanup.cleanupOldVideos, {
         userId,
       });
@@ -108,6 +125,14 @@ export const processVideo = action({
         processingStatus: "failed",
         errorMessage: error instanceof Error ? error.message : "Unknown error",
       });
+      // Clean up storage even on failure
+      if (storageId) {
+        try {
+          await ctx.runMutation(internal.ingestHelpers.deleteStorageFile, { storageId });
+        } catch {
+          // Best-effort cleanup
+        }
+      }
     }
   },
 });

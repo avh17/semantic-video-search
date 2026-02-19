@@ -16,7 +16,9 @@ import {
   DialogTrigger,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { VideoCard } from "@/components/VideoCard";
 import { Id } from "../../../../convex/_generated/dataModel";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 
 type Creator = {
   _id: Id<"creators">;
@@ -27,6 +29,13 @@ type Creator = {
   videoCount: number;
 };
 
+type FetchedVideo = {
+  id: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  directVideoUrl?: string; // direct CDN URL for audio extraction
+};
+
 export default function CreatorsPage() {
   const { userId } = useSession();
   const creators = useQuery(api.creators.list, { userId });
@@ -35,26 +44,117 @@ export default function CreatorsPage() {
   const hardDelete = useMutation(api.creators.hardDelete);
 
   const [open, setOpen] = useState(false);
-  const [platform, setPlatform] = useState<"instagram" | "tiktok">("instagram");
+  const [platform] = useState<"instagram">("instagram");
   const [handle, setHandle] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Video loading state per creator
+  const [expandedCreatorId, setExpandedCreatorId] = useState<string | null>(null);
+  const [creatorVideos, setCreatorVideos] = useState<Record<string, FetchedVideo[]>>({});
+  const [loadingVideos, setLoadingVideos] = useState<Record<string, boolean>>({});
+  const [videoErrors, setVideoErrors] = useState<Record<string, string>>({});
+
+  async function fetchVideosFromRapidAPI(handle: string): Promise<FetchedVideo[]> {
+    const apiKey = process.env.NEXT_PUBLIC_RAPIDAPI_KEY ?? "";
+    const body = new URLSearchParams({ username_or_url: handle, amount: "10" });
+    const res = await fetch(
+      "https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_reels.php",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-RapidAPI-Key": apiKey,
+          "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
+        },
+        body: body.toString(),
+      }
+    );
+    if (!res.ok) throw new Error(`Instagram API error: ${res.status}`);
+    const data = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reels: any[] = data?.reels ?? [];
+    return reels.slice(0, 10).map((item) => {
+      const media = item?.node?.media ?? item;
+      // Prefer highest-quality video version for audio extraction
+      const directVideoUrl: string | undefined =
+        media.video_versions?.[0]?.url ??
+        media.video_url ??
+        undefined;
+      return {
+        id: String(media.pk ?? media.code ?? Math.random()),
+        videoUrl: `https://www.instagram.com/reel/${media.code}/`,
+        thumbnailUrl:
+          media.image_versions2?.candidates?.[0]?.url ?? media.thumbnail_url ?? "",
+        directVideoUrl,
+      };
+    });
+  }
+
+  async function loadCreatorVideos(creator: Creator) {
+    const id = creator._id;
+
+    // Toggle off if already expanded
+    if (expandedCreatorId === id) {
+      setExpandedCreatorId(null);
+      return;
+    }
+
+    setExpandedCreatorId(id);
+
+    // Use cached videos if already loaded
+    if (creatorVideos[id]) return;
+
+    setLoadingVideos((prev) => ({ ...prev, [id]: true }));
+    setVideoErrors((prev) => ({ ...prev, [id]: "" }));
+
+    try {
+      const videos = await fetchVideosFromRapidAPI(creator.handle);
+      setCreatorVideos((prev) => ({ ...prev, [id]: videos }));
+    } catch (err) {
+      setVideoErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : "Failed to load videos",
+      }));
+    } finally {
+      setLoadingVideos((prev) => ({ ...prev, [id]: false }));
+    }
+  }
 
   async function handleAddCreator(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
     try {
-      await createCreator({
+      const cleanHandle = handle.replace("@", "");
+      const creatorId = await createCreator({
         userId,
         platform,
-        handle: handle.replace("@", ""),
-        displayName: displayName || handle.replace("@", ""),
+        handle: cleanHandle,
+        displayName: displayName || cleanHandle,
       });
       setOpen(false);
       setHandle("");
       setDisplayName("");
+
+      // Auto-load videos for newly added creator
+      if (creatorId) {
+        setExpandedCreatorId(creatorId);
+        setLoadingVideos((prev) => ({ ...prev, [creatorId]: true }));
+        setVideoErrors((prev) => ({ ...prev, [creatorId]: "" }));
+        try {
+          const videos = await fetchVideosFromRapidAPI(cleanHandle);
+          setCreatorVideos((prev) => ({ ...prev, [creatorId]: videos }));
+        } catch (err) {
+          setVideoErrors((prev) => ({
+            ...prev,
+            [creatorId]: err instanceof Error ? err.message : "Failed to load videos",
+          }));
+        } finally {
+          setLoadingVideos((prev) => ({ ...prev, [creatorId]: false }));
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add creator");
     } finally {
@@ -65,6 +165,7 @@ export default function CreatorsPage() {
   async function handleSoftDelete(id: Id<"creators">) {
     if (!confirm("Remove this creator? Videos will be kept.")) return;
     await softDelete({ id });
+    if (expandedCreatorId === id) setExpandedCreatorId(null);
   }
 
   async function handleHardDelete(id: Id<"creators">) {
@@ -75,6 +176,7 @@ export default function CreatorsPage() {
     )
       return;
     await hardDelete({ id });
+    if (expandedCreatorId === id) setExpandedCreatorId(null);
   }
 
   return (
@@ -93,27 +195,6 @@ export default function CreatorsPage() {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddCreator} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Platform</label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={platform === "instagram" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setPlatform("instagram")}
-                  >
-                    Instagram
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={platform === "tiktok" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setPlatform("tiktok")}
-                  >
-                    TikTok
-                  </Button>
-                </div>
-              </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Handle</label>
                 <Input
@@ -151,52 +232,119 @@ export default function CreatorsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(creators as Creator[]).map((creator) => (
-            <Card key={creator._id}>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">
-                    @{creator.handle}
-                  </CardTitle>
-                  <Badge
-                    variant={
-                      creator.platform === "instagram"
-                        ? "default"
-                        : "secondary"
-                    }
-                  >
-                    {creator.platform}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  {creator.displayName}
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {creator.videoCount} video
-                  {creator.videoCount !== 1 ? "s" : ""}
-                </p>
-                <div className="flex gap-2 mt-4">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleSoftDelete(creator._id)}
-                  >
-                    Remove
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => handleHardDelete(creator._id)}
-                  >
-                    Delete All
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="space-y-4">
+          {(creators as Creator[]).map((creator) => {
+            const isExpanded = expandedCreatorId === creator._id;
+            const videos = creatorVideos[creator._id];
+            const isLoadingVids = loadingVideos[creator._id];
+            const videoError = videoErrors[creator._id];
+
+            return (
+              <div key={creator._id} className="space-y-3">
+                {/* Creator card */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">
+                        @{creator.handle}
+                      </CardTitle>
+                      <Badge
+                        variant={
+                          creator.platform === "instagram"
+                            ? "default"
+                            : "secondary"
+                        }
+                      >
+                        {creator.platform}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">
+                      {creator.displayName}
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {videos
+                        ? `${videos.length} reels fetched · ${creator.videoCount} transcribed`
+                        : `${creator.videoCount} transcribed`}
+                    </p>
+                    <div className="flex gap-2 mt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadCreatorVideos(creator)}
+                        disabled={isLoadingVids}
+                      >
+                        {isLoadingVids ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            Loading...
+                          </>
+                        ) : isExpanded ? (
+                          <>
+                            <ChevronUp className="h-3 w-3 mr-1" />
+                            Hide Videos
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-3 w-3 mr-1" />
+                            View Videos
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSoftDelete(creator._id)}
+                      >
+                        Remove
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleHardDelete(creator._id)}
+                      >
+                        Delete All
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Video cards */}
+                {isExpanded && (
+                  <div className="pl-4">
+                    {videoError ? (
+                      <p className="text-sm text-destructive">{videoError}</p>
+                    ) : isLoadingVids ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading top videos...
+                      </div>
+                    ) : videos && videos.length > 0 ? (
+                      <>
+                        <p className="text-sm text-muted-foreground mb-3">
+                          Top {videos.length} videos
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-10 gap-2">
+                          {videos.map((video) => (
+                            <VideoCard
+                              key={video.id}
+                              videoUrl={video.videoUrl}
+                              thumbnailUrl={video.thumbnailUrl}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No videos found for this creator.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

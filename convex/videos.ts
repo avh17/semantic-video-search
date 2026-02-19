@@ -7,6 +7,7 @@ export const create = mutation({
     userId: v.id("users"),
     platform: v.union(v.literal("instagram"), v.literal("tiktok")),
     videoUrl: v.string(),
+    thumbnailUrl: v.optional(v.string()),
     caption: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -15,6 +16,7 @@ export const create = mutation({
       userId: args.userId,
       platform: args.platform,
       videoUrl: args.videoUrl,
+      thumbnailUrl: args.thumbnailUrl,
       caption: args.caption,
       processingStatus: "pending",
       createdAt: Date.now(),
