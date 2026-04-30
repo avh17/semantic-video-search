@@ -20,8 +20,6 @@ This app fetches a creator's reels, transcribes them with OpenAI Whisper, stores
 - OpenAI embeddings
 - ScrapeCreators
 
-```
-
 ## Main routes
 
 - `/`
