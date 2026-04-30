@@ -1,5 +1,7 @@
 # Semantic Video Search
 
+https://semantic-video-search-rouge.vercel.app/auth/sign-in
+
 Search Instagram Reels and TikToks by what was actually **said** in them — not hashtags, not captions. Paste a video URL, and the app transcribes the audio, embeds the speech semantically, and makes it instantly searchable via natural language.
 
 > Type *"how to fix sourdough that won't rise"* and find the exact video where a creator said those words.
