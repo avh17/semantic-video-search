@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 export default function Home() {
@@ -14,9 +13,9 @@ export default function Home() {
           any video by its spoken content.
         </p>
         <div className="mt-8 flex gap-4 justify-center">
-          <Link href="/auth/sign-in">
-            <Button size="lg">Get Started</Button>
-          </Link>
+          <Button asChild size="lg">
+            <a href="/auth/sign-in">Get Started</a>
+          </Button>
         </div>
       </div>
       <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-3xl w-full">

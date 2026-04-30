@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionUserId } from "@/lib/session";
+import { getCurrentUserId } from "@/lib/auth-user";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -11,7 +11,7 @@ const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
  */
 export async function POST() {
   try {
-    const userId = await getSessionUserId();
+    const userId = await getCurrentUserId();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

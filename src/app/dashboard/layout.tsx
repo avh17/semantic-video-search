@@ -1,15 +1,15 @@
 import Link from "next/link";
-import { getSessionUserId } from "@/lib/session";
 import { redirect } from "next/navigation";
 import { SignOutButton } from "@/components/sign-out-button";
 import { SessionProvider } from "@/components/session-provider";
+import { getCurrentUserId } from "@/lib/auth-user";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const userId = await getSessionUserId();
+  const userId = await getCurrentUserId();
   if (!userId) {
     redirect("/auth/sign-in");
   }

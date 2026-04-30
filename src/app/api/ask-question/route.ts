@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUserId } from "@/lib/session";
+import { getCurrentUserId } from "@/lib/auth-user";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -33,7 +33,7 @@ type SearchActionResult = {
  */
 export async function POST(request: NextRequest) {
   try {
-    const userId = await getSessionUserId();
+    const userId = await getCurrentUserId();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
