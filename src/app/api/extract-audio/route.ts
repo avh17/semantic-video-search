@@ -1,15 +1,18 @@
 import { randomUUID } from "crypto";
 import { spawn } from "child_process";
-import { access } from "fs/promises";
+import { constants } from "fs";
 import { readFile, rm, writeFile } from "fs/promises";
-import { createRequire } from "module";
+import { access } from "fs/promises";
 import { tmpdir } from "os";
-import { basename, dirname, join } from "path";
+import { basename, join } from "path";
+import ffmpegStaticPath from "ffmpeg-static";
 import { NextRequest, NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const ALLOWED_HOSTS = ["cdninstagram.com", "fbcdn.net", "instagram.com"];
-const require = createRequire(import.meta.url);
-const ffmpegStaticPath = require("ffmpeg-static") as string | null;
+const ffmpegBinaryName = basename(ffmpegStaticPath || "ffmpeg");
 
 function isAllowedMediaUrl(mediaUrl: string) {
   try {
@@ -23,14 +26,13 @@ function isAllowedMediaUrl(mediaUrl: string) {
 async function resolveFfmpegPath() {
   const candidates = [
     process.env.FFMPEG_PATH,
-    ffmpegStaticPath &&
-      join(dirname(require.resolve("ffmpeg-static")), basename(ffmpegStaticPath)),
+    join(process.cwd(), "node_modules", "ffmpeg-static", ffmpegBinaryName),
     ffmpegStaticPath,
   ].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
     try {
-      await access(candidate);
+      await access(candidate, constants.X_OK);
       return candidate;
     } catch {
       continue;
