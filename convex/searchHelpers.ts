@@ -1,6 +1,50 @@
 import { v } from "convex/values";
 import { internalQuery, query } from "./_generated/server";
 
+export const getAllUserTranscripts = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const transcripts = await ctx.db
+      .query("transcripts")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    const enriched = await Promise.all(
+      transcripts.map(async (transcript) => {
+        const video = await ctx.db.get(transcript.videoId);
+        if (!video) return null;
+
+        const creator = await ctx.db.get(video.creatorId);
+
+        return {
+          transcriptId: transcript._id,
+          transcript: {
+            firstTwoSentences: transcript.firstTwoSentences,
+            fullText: transcript.fullText,
+          },
+          video: {
+            _id: video._id,
+            videoUrl: video.videoUrl,
+            thumbnailUrl: video.thumbnailUrl,
+            platform: video.platform,
+            caption: video.caption,
+            processingStatus: video.processingStatus,
+          },
+          creator: creator
+            ? {
+                handle: creator.handle,
+                platform: creator.platform,
+                displayName: creator.displayName,
+              }
+            : null,
+        };
+      })
+    );
+
+    return enriched.filter(Boolean);
+  },
+});
+
 export const getSearchResultData = internalQuery({
   args: { transcriptId: v.id("transcripts") },
   handler: async (ctx, args) => {

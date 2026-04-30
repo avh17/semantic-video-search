@@ -17,11 +17,11 @@ This app solves that by turning spoken audio into a queryable knowledge base —
 ## How It Works
 
 ```
-Video URL → Audio Extraction → Whisper Transcription → Embedding → Vector Index → Search
+Video URL → Video Extraction → Whisper Transcription → Embedding → Vector Index → Search
 ```
 
-1. **Paste a URL** — Instagram Reel or TikTok
-2. **Audio is extracted** via the cobalt.tools API (MP3)
+1. **Select a creator** — Browse Instagram reels from any creator
+2. **Video is extracted** via ScrapeCreators API (direct MP4 URL)
 3. **OpenAI Whisper** transcribes the speech to text
 4. **text-embedding-3-small** converts the transcript into a 1536-dimensional semantic vector
 5. **Convex** stores and indexes the embedding with real-time status updates throughout
@@ -45,26 +45,27 @@ Video URL → Audio Extraction → Whisper Transcription → Embedding → Vecto
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 15 (App Router), React 18, TypeScript, Tailwind CSS, shadcn/ui |
-| Backend | Convex (serverless functions, real-time DB, vector index) |
+| Backend | Convex (serverless functions, real-time DB, vector index, file storage) |
 | Transcription | OpenAI Whisper (`whisper-1`) |
 | Embeddings | OpenAI `text-embedding-3-small` (1536 dimensions) |
-| Audio Extraction | cobalt.tools API |
+| Video Extraction | ScrapeCreators API (pay-as-you-go, 1 credit per video) |
 | Auth | httpOnly cookie session (email + name, 7-day TTL) |
 
 ---
 
 ## Architecture
 
-### Ingestion Pipeline (7 steps)
+### Ingestion Pipeline
 
 ```
-1. Create video record  →  processingStatus: "pending"
-2. Extract audio        →  POST /api/download-audio → cobalt.tools → MP3 URL
-3. Transcribe           →  OpenAI Whisper → fullText
-4. Extract preview      →  first two sentences from fullText
-5. Embed                →  OpenAI embeddings API → float64[1536]
-6. Store transcript     →  Convex: fullText + embedding + metadata
-7. Cleanup              →  delete oldest video(s) if user exceeds 10
+1. Extract video URL    →  ScrapeCreators API → direct MP4 download link
+2. Proxy & upload       →  /api/proxy-media → Convex storage (temp file)
+3. Create video record  →  processingStatus: "pending"
+4. Transcribe           →  OpenAI Whisper → fullText
+5. Extract preview      →  first two sentences from fullText
+6. Embed                →  OpenAI embeddings API → float64[1536]
+7. Store transcript     →  Convex: fullText + embedding + metadata
+8. Cleanup              →  delete temp video file from Convex storage
 ```
 
 Each step updates `processingStatus` in Convex. The frontend subscribes via `useQuery` hooks, so status changes propagate to the UI in real time without a single polling call.
@@ -100,6 +101,7 @@ transcripts   — videoId, userId, fullText, firstTwoSentences, embedding (float
 - Node.js 18+
 - A [Convex](https://convex.dev) account
 - OpenAI API key
+- [ScrapeCreators](https://app.scrapecreators.com) API key (100 free credits, then $10 for 5,000)
 
 ### Setup
 
@@ -128,8 +130,12 @@ Open [http://localhost:3000](http://localhost:3000).
 CONVEX_DEPLOYMENT=
 NEXT_PUBLIC_CONVEX_URL=
 OPENAI_API_KEY=
+NEXT_PUBLIC_OPENAI_API_KEY=
+SCRAPECREATORS_API_KEY=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
+
+`SCRAPECREATORS_API_KEY` now powers both the reel browser and the direct video downloader. If it's missing, creators/search pages will display clear errors instead of hitting RapidAPI.
 
 ---
 
@@ -151,7 +157,9 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 |---|---|---|
 | `/api/auth/signin` | POST | Create session cookie, upsert user in Convex |
 | `/api/auth/signout` | POST | Clear session cookie |
-| `/api/download-audio` | POST | Proxy video URL to cobalt.tools, return MP3 URL |
+| `/api/fetch-creator-videos` | POST | Use ScrapeCreators to list a creator’s latest reels |
+| `/api/extract-instagram-video` | POST | Extract direct video URL from Instagram reel (ScrapeCreators) |
+| `/api/proxy-media` | POST | Fetch video via server-side proxy to avoid CORS |
 
 ---
 
@@ -170,7 +178,7 @@ This is a cost-control guardrail. Each video ingestion costs ~$0.006 in OpenAI A
 
 ## Limitations
 
-- Requires publicly accessible video URLs (private/authenticated content is not supported)
-- Audio extraction depends on cobalt.tools availability
+- Requires publicly accessible Instagram reels (private/authenticated content is not supported)
+- Video extraction depends on ScrapeCreators API availability
 - Whisper accuracy varies with background music, heavy accents, and low-quality audio
-- 10-video limit per user (by design — see above)
+- ScrapeCreators cost: 1 credit per video extraction (100 free, then $10 for 5,000 credits)

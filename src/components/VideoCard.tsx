@@ -1,4 +1,7 @@
+"use client";
+
 import { ExternalLink } from "lucide-react";
+import { useState, useEffect } from "react";
 
 type VideoCardProps = {
   videoUrl: string;
@@ -6,6 +9,68 @@ type VideoCardProps = {
 };
 
 export function VideoCard({ videoUrl, thumbnailUrl }: VideoCardProps) {
+  const [proxiedThumbnail, setProxiedThumbnail] = useState<{
+    sourceUrl: string;
+    objectUrl: string;
+  } | null>(null);
+  const [proxyFailureUrl, setProxyFailureUrl] = useState<string | null>(null);
+  const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
+  const shouldProxy =
+    !!thumbnailUrl &&
+    (thumbnailUrl.includes("cdninstagram.com") ||
+      thumbnailUrl.includes("fbcdn.net") ||
+      thumbnailUrl.includes("instagram.com"));
+  const currentProxiedThumbnail =
+    proxiedThumbnail?.sourceUrl === thumbnailUrl ? proxiedThumbnail.objectUrl : "";
+  const displayThumbnail = shouldProxy ? currentProxiedThumbnail : thumbnailUrl;
+  const imageError =
+    proxyFailureUrl === thumbnailUrl ||
+    (displayThumbnail ? failedImageSrc === displayThumbnail : false);
+
+  useEffect(() => {
+    if (!shouldProxy || !thumbnailUrl) {
+      return;
+    }
+
+    let isCancelled = false;
+    let objectUrl = "";
+
+    fetch("/api/proxy-media", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mediaUrl: thumbnailUrl }),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error("Failed to proxy thumbnail");
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (isCancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setProxiedThumbnail({
+          sourceUrl: thumbnailUrl,
+          objectUrl,
+        });
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setProxyFailureUrl(thumbnailUrl);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [shouldProxy, thumbnailUrl]);
+
   return (
     <a
       href={videoUrl}
@@ -13,16 +78,17 @@ export function VideoCard({ videoUrl, thumbnailUrl }: VideoCardProps) {
       rel="noopener noreferrer"
       className="group relative block aspect-[9/16] overflow-hidden rounded-lg border bg-muted hover:border-primary transition-all duration-200"
     >
-      {thumbnailUrl ? (
+      {displayThumbnail && !imageError ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={thumbnailUrl}
+          src={displayThumbnail}
           alt="Video thumbnail"
           className="h-full w-full object-cover"
+          onError={() => setFailedImageSrc(displayThumbnail)}
         />
       ) : (
         <div className="flex h-full items-center justify-center text-muted-foreground text-xs text-center px-2">
-          No thumbnail
+          {imageError ? "Failed to load" : "Loading..."}
         </div>
       )}
       {/* Hover overlay */}

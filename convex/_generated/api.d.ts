@@ -10,6 +10,7 @@
 
 import type * as cleanup from "../cleanup.js";
 import type * as creators from "../creators.js";
+import type * as debug from "../debug.js";
 import type * as ingest from "../ingest.js";
 import type * as ingestHelpers from "../ingestHelpers.js";
 import type * as search from "../search.js";
@@ -26,6 +27,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   cleanup: typeof cleanup;
   creators: typeof creators;
+  debug: typeof debug;
   ingest: typeof ingest;
   ingestHelpers: typeof ingestHelpers;
   search: typeof search;

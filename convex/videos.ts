@@ -104,3 +104,19 @@ export const getStats = query({
     return { totalVideos, processingVideos };
   },
 });
+
+export const findByUrl = query({
+  args: {
+    userId: v.id("users"),
+    videoUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const video = await ctx.db
+      .query("videos")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .filter((q) => q.eq(q.field("videoUrl"), args.videoUrl))
+      .first();
+
+    return video;
+  },
+});

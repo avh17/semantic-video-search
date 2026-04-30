@@ -17,6 +17,24 @@ function extractFirstTwoSentences(text: string): string {
   return sentences.join(" ");
 }
 
+function buildEmbeddingInput(fullText: string, firstTwoSentences: string): string {
+  const cleanedText = fullText.replace(/\s+/g, " ").trim();
+
+  if (cleanedText.length <= 1800) {
+    return cleanedText;
+  }
+
+  const start = cleanedText.slice(0, 600);
+  const middleStart = Math.max(0, Math.floor(cleanedText.length / 2) - 300);
+  const middle = cleanedText.slice(middleStart, middleStart + 600);
+  const end = cleanedText.slice(-600);
+
+  return [firstTwoSentences, start, middle, end]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 2400);
+}
+
 export const processVideo = action({
   args: {
     videoId: v.id("videos"),
@@ -29,7 +47,7 @@ export const processVideo = action({
   },
   handler: async (ctx, args) => {
     const { videoId, userId, openaiApiKey } = args;
-    let storageId = args.storageId;
+    const storageId = args.storageId;
 
     try {
       // Step 1: Mark as processing
@@ -90,7 +108,7 @@ export const processVideo = action({
       // Step 5: Generate embedding
       const embeddingRes = await openai.embeddings.create({
         model: "text-embedding-3-small",
-        input: firstTwoSentences,
+        input: buildEmbeddingInput(fullText, firstTwoSentences),
       });
 
       const embedding = embeddingRes.data[0].embedding;
@@ -133,6 +151,7 @@ export const processVideo = action({
           // Best-effort cleanup
         }
       }
+      throw error;
     }
   },
 });

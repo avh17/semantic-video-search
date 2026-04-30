@@ -56,40 +56,23 @@ export default function CreatorsPage() {
   const [loadingVideos, setLoadingVideos] = useState<Record<string, boolean>>({});
   const [videoErrors, setVideoErrors] = useState<Record<string, string>>({});
 
-  async function fetchVideosFromRapidAPI(handle: string): Promise<FetchedVideo[]> {
-    const apiKey = process.env.NEXT_PUBLIC_RAPIDAPI_KEY ?? "";
-    const body = new URLSearchParams({ username_or_url: handle, amount: "10" });
-    const res = await fetch(
-      "https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_reels.php",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "X-RapidAPI-Key": apiKey,
-          "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
-        },
-        body: body.toString(),
-      }
-    );
-    if (!res.ok) throw new Error(`Instagram API error: ${res.status}`);
-    const data = await res.json();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const reels: any[] = data?.reels ?? [];
-    return reels.slice(0, 10).map((item) => {
-      const media = item?.node?.media ?? item;
-      // Prefer highest-quality video version for audio extraction
-      const directVideoUrl: string | undefined =
-        media.video_versions?.[0]?.url ??
-        media.video_url ??
-        undefined;
-      return {
-        id: String(media.pk ?? media.code ?? Math.random()),
-        videoUrl: `https://www.instagram.com/reel/${media.code}/`,
-        thumbnailUrl:
-          media.image_versions2?.candidates?.[0]?.url ?? media.thumbnail_url ?? "",
-        directVideoUrl,
-      };
+  async function fetchCreatorVideos(handle: string): Promise<FetchedVideo[]> {
+    const res = await fetch("/api/fetch-creator-videos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "instagram", handle }),
     });
+
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}));
+      const message =
+        (errorBody as { error?: string }).error ??
+        `Failed to fetch reels: ${res.status}`;
+      throw new Error(message);
+    }
+
+    const data = (await res.json()) as { videos?: FetchedVideo[] };
+    return data.videos ?? [];
   }
 
   async function loadCreatorVideos(creator: Creator) {
@@ -110,9 +93,11 @@ export default function CreatorsPage() {
     setVideoErrors((prev) => ({ ...prev, [id]: "" }));
 
     try {
-      const videos = await fetchVideosFromRapidAPI(creator.handle);
+      const videos = await fetchCreatorVideos(creator.handle);
+      console.log(`Fetched ${videos.length} videos for @${creator.handle}`, videos);
       setCreatorVideos((prev) => ({ ...prev, [id]: videos }));
     } catch (err) {
+      console.error(`Failed to load videos for @${creator.handle}:`, err);
       setVideoErrors((prev) => ({
         ...prev,
         [id]: err instanceof Error ? err.message : "Failed to load videos",
@@ -144,7 +129,7 @@ export default function CreatorsPage() {
         setLoadingVideos((prev) => ({ ...prev, [creatorId]: true }));
         setVideoErrors((prev) => ({ ...prev, [creatorId]: "" }));
         try {
-          const videos = await fetchVideosFromRapidAPI(cleanHandle);
+          const videos = await fetchCreatorVideos(cleanHandle);
           setCreatorVideos((prev) => ({ ...prev, [creatorId]: videos }));
         } catch (err) {
           setVideoErrors((prev) => ({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { useSession } from "@/components/session-provider";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { VideoCard } from "@/components/VideoCard";
 import { Id } from "../../../../convex/_generated/dataModel";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Send, Check } from "lucide-react";
 
 type Creator = {
   _id: Id<"creators">;
@@ -27,9 +27,10 @@ type FetchedVideo = {
 
 type SearchResult = {
   score: number;
+  matchedTerms?: string[];
   transcript: { firstTwoSentences: string; fullText: string };
   video: {
-    _id: Id<"videos">;
+    _id?: Id<"videos">;
     videoUrl: string;
     thumbnailUrl?: string;
     platform: string;
@@ -39,68 +40,63 @@ type SearchResult = {
   creator: { handle: string; platform: string; displayName: string } | null;
 };
 
-async function fetchInstagramReels(handle: string, apiKey: string): Promise<FetchedVideo[]> {
-  const body = new URLSearchParams({ username_or_url: handle, amount: "10" });
-  const res = await fetch(
-    "https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_reels.php",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-RapidAPI-Key": apiKey,
-        "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
-      },
-      body: body.toString(),
-    }
-  );
-  if (!res.ok) throw new Error(`Instagram API error: ${res.status}`);
-  const data = await res.json();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const reels: any[] = data?.reels ?? [];
-  return reels.slice(0, 10).map((item) => {
-    const media = item?.node?.media ?? item;
-    const directVideoUrl: string | undefined =
-      media.video_versions?.[0]?.url ??
-      media.video_url ??
-      undefined;
-    return {
-      id: String(media.pk ?? media.code ?? Math.random()),
-      videoUrl: `https://www.instagram.com/reel/${media.code}/`,
-      thumbnailUrl:
-        media.image_versions2?.candidates?.[0]?.url ?? media.thumbnail_url ?? "",
-      directVideoUrl,
-    };
-  });
-}
+type SearchSource = {
+  videoId?: Id<"videos">;
+  videoUrl: string;
+  thumbnailUrl?: string;
+  creator?: string;
+  platform: string;
+  score: number;
+  preview?: string;
+  matchedTerms?: string[];
+};
 
-// Fallback: use Cobalt proxy when no direct CDN URL is available
-async function downloadAudioViaCobalt(videoUrl: string): Promise<string> {
-  const res = await fetch("/api/download-audio", {
+async function fetchCreatorReels(handle: string): Promise<FetchedVideo[]> {
+  const res = await fetch("/api/fetch-creator-videos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ videoUrl }),
+    body: JSON.stringify({ platform: "instagram", handle }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({}));
+    const message =
+      (errorBody as { error?: string }).error ??
+      `Failed to fetch reels: ${res.status}`;
+    throw new Error(message);
+  }
+
+  const data = (await res.json()) as { videos?: FetchedVideo[] };
+  return data.videos ?? [];
+}
+
+// Extract video URL from Instagram reel page (no API key needed)
+async function extractInstagramVideoUrl(reelUrl: string): Promise<string> {
+  const res = await fetch("/api/extract-instagram-video", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reelUrl }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? "Audio download failed");
+    throw new Error((err as { error?: string }).error ?? "Video extraction failed");
   }
-  const { audioUrl } = await res.json();
-  return audioUrl;
+  const { videoUrl } = await res.json();
+  return videoUrl;
 }
 
 export default function SearchPage() {
   const { userId } = useSession();
   const creators = useQuery(api.creators.list, { userId });
   const createVideo = useMutation(api.videos.create);
-  const generateUploadUrl = useMutation(api.ingestHelpers.generateUploadUrl);
   const processVideo = useAction(api.ingest.processVideo);
-  const searchVideos = useAction(api.search.searchVideos);
 
   // Creator video browser
   const [selectedCreatorId, setSelectedCreatorId] = useState<string>("");
   const [creatorVideos, setCreatorVideos] = useState<FetchedVideo[]>([]);
   const [fetchingVideos, setFetchingVideos] = useState(false);
   const [fetchError, setFetchError] = useState("");
+  const [videoStatuses, setVideoStatuses] = useState<Record<string, { status: string; videoId?: string }>>({});
 
   // Transcription state
   const [transcribingId, setTranscribingId] = useState<string | null>(null);
@@ -108,17 +104,77 @@ export default function SearchPage() {
   const [transcribeProgress, setTranscribeProgress] = useState(0);
   const [transcribeErrors, setTranscribeErrors] = useState<string[]>([]);
 
-  // Search
+  // Unified search state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
+  const [aiAnswer, setAiAnswer] = useState<string>("");
+  const [aiDisplayedAnswer, setAiDisplayedAnswer] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Check which videos have already been transcribed
+  useEffect(() => {
+    async function checkVideoStatuses() {
+      if (creatorVideos.length === 0) return;
+
+      const statuses: Record<string, { status: string; videoId?: string }> = {};
+
+      for (const video of creatorVideos) {
+        try {
+          const res = await fetch("/api/check-video-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoUrl: video.videoUrl }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.exists) {
+              statuses[video.id] = {
+                status: data.processingStatus,
+                videoId: data.videoId,
+              };
+            }
+          }
+        } catch {
+          // Ignore errors, video just won't show status
+        }
+      }
+
+      setVideoStatuses(statuses);
+    }
+
+    checkVideoStatuses();
+  }, [creatorVideos]);
+
+  // Streaming effect for AI answer
+  useEffect(() => {
+    if (!aiAnswer) {
+      setAiDisplayedAnswer("");
+      return;
+    }
+
+    let currentIndex = 0;
+    setAiDisplayedAnswer("");
+
+    const intervalId = setInterval(() => {
+      if (currentIndex < aiAnswer.length) {
+        setAiDisplayedAnswer(aiAnswer.slice(0, currentIndex + 1));
+        currentIndex++;
+      } else {
+        clearInterval(intervalId);
+      }
+    }, 15); // 15ms per character for smooth streaming
+
+    return () => clearInterval(intervalId);
+  }, [aiAnswer]);
 
   async function handleSelectCreator(creatorId: string) {
     setSelectedCreatorId(creatorId);
     setCreatorVideos([]);
     setFetchError("");
     setTranscribeErrors([]);
+    setVideoStatuses({});
     if (!creatorId) return;
 
     const creator = (creators as Creator[] | undefined)?.find((c) => c._id === creatorId);
@@ -126,8 +182,7 @@ export default function SearchPage() {
 
     setFetchingVideos(true);
     try {
-      const apiKey = process.env.NEXT_PUBLIC_RAPIDAPI_KEY ?? "";
-      const videos = await fetchInstagramReels(creator.handle, apiKey);
+      const videos = await fetchCreatorReels(creator.handle);
       setCreatorVideos(videos);
     } catch (err) {
       setFetchError(err instanceof Error ? err.message : "Failed to load videos");
@@ -140,35 +195,20 @@ export default function SearchPage() {
     const creator = (creators as Creator[] | undefined)?.find((c) => c._id === selectedCreatorId);
     if (!creator) throw new Error("Creator not found");
 
-    let audioUrl: string | undefined;
-    let storageId: Id<"_storage"> | undefined;
+    // 1a. Extract direct video URL from Instagram
+    let directVideoUrl = video.directVideoUrl;
 
-    if (video.directVideoUrl) {
-      // 1a. Fetch the direct CDN video via server-side proxy (avoids CORS)
-      const mediaRes = await fetch("/api/proxy-media", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaUrl: video.directVideoUrl }),
-      });
-      if (!mediaRes.ok) {
-        const err = await mediaRes.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `Failed to fetch video: ${mediaRes.status}`);
+    if (!directVideoUrl) {
+      try {
+        directVideoUrl = await extractInstagramVideoUrl(video.videoUrl);
+      } catch (err) {
+        // If we get a 429 rate limit error, throw a more helpful message
+        const errorMsg = err instanceof Error ? err.message : "Unknown error";
+        if (errorMsg.includes("429")) {
+          throw new Error("Video Downloader API rate limit exceeded. Please wait a few minutes or upgrade your ScrapeCreators plan.");
+        }
+        throw err;
       }
-      const mediaBlob = await mediaRes.blob();
-
-      // 1b. Upload to Convex storage so the action can fetch it using ctx.storage.getUrl()
-      const uploadUrl = await generateUploadUrl();
-      const uploadRes = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": mediaBlob.type || "video/mp4" },
-        body: mediaBlob,
-      });
-      if (!uploadRes.ok) throw new Error("Failed to upload video to storage");
-      const { storageId: sid } = await uploadRes.json();
-      storageId = sid as Id<"_storage">;
-    } else {
-      // 1c. No direct URL — fall back to Cobalt proxy and pass audioUrl
-      audioUrl = await downloadAudioViaCobalt(video.videoUrl);
     }
 
     // 2. Create video record with thumbnail
@@ -185,17 +225,32 @@ export default function SearchPage() {
       videoId,
       userId,
       videoUrl: video.videoUrl,
-      ...(storageId ? { storageId } : { audioUrl: audioUrl! }),
+      audioUrl: directVideoUrl,
       openaiApiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY || "",
     });
   }
 
   async function handleTranscribeSingle(video: FetchedVideo) {
+    // Check if video is already transcribed
+    const videoStatus = videoStatuses[video.id];
+    if (videoStatus?.status === "completed") {
+      console.log("Video already transcribed, skipping:", video.videoUrl);
+      return;
+    }
+
     setTranscribingId(video.id);
+    setTranscribeErrors([]);
     try {
       await transcribeOne(video);
+      // Update status after successful transcription
+      setVideoStatuses(prev => ({
+        ...prev,
+        [video.id]: { status: "completed" }
+      }));
     } catch (err) {
       console.error("Transcribe error:", err);
+      const errorMsg = err instanceof Error ? err.message : "Failed to transcribe";
+      setTranscribeErrors([errorMsg]);
     } finally {
       setTranscribingId(null);
     }
@@ -207,10 +262,21 @@ export default function SearchPage() {
     setTranscribeErrors([]);
     const errors: string[] = [];
 
-    for (let i = 0; i < creatorVideos.length; i++) {
-      const video = creatorVideos[i];
+    // Filter out already transcribed videos
+    const videosToTranscribe = creatorVideos.filter(video => {
+      const videoStatus = videoStatuses[video.id];
+      return videoStatus?.status !== "completed";
+    });
+
+    for (let i = 0; i < videosToTranscribe.length; i++) {
+      const video = videosToTranscribe[i];
       try {
         await transcribeOne(video);
+        // Update status after successful transcription
+        setVideoStatuses(prev => ({
+          ...prev,
+          [video.id]: { status: "completed" }
+        }));
       } catch (err) {
         errors.push(`Reel ${i + 1}: ${err instanceof Error ? err.message : "failed"}`);
       }
@@ -221,23 +287,61 @@ export default function SearchPage() {
     setTranscribingAll(false);
   }
 
-  async function handleSearch(e: React.FormEvent) {
+  async function handleUnifiedSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!searchQuery.trim()) return;
-    setSearchLoading(true);
-    setSearchError("");
+    if (!searchQuery.trim() || isLoading) return;
+
+    setIsLoading(true);
+    setError("");
+    setAiAnswer("");
+    setSearchResults(null);
 
     try {
-      const results = await searchVideos({
-        userId,
-        queryText: searchQuery,
-        openaiApiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY || "",
+      // Get AI answer with sources
+      const res = await fetch("/api/ask-question", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: searchQuery }),
       });
-      setSearchResults(results as SearchResult[]);
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to get answer");
+      }
+
+      const data = (await res.json()) as { answer: string; sources: SearchSource[] };
+      setAiAnswer(data.answer);
+
+      // Convert sources to search results format
+      const results = data.sources.map((source) => ({
+        score: source.score,
+        matchedTerms: source.matchedTerms || [],
+        transcript: {
+          firstTwoSentences: source.preview || "",
+          fullText: "",
+        },
+        video: {
+          _id: source.videoId,
+          videoUrl: source.videoUrl,
+          thumbnailUrl: source.thumbnailUrl,
+          platform: source.platform,
+          caption: "",
+          processingStatus: "completed",
+        },
+        creator: source.creator
+          ? {
+              handle: source.creator,
+              platform: source.platform,
+              displayName: source.creator,
+            }
+          : null,
+      }));
+
+      setSearchResults(results);
     } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "Search failed");
+      setError(err instanceof Error ? err.message : "Search failed");
     } finally {
-      setSearchLoading(false);
+      setIsLoading(false);
     }
   }
 
@@ -245,8 +349,6 @@ export default function SearchPage() {
     <div className="space-y-8">
       {/* Creator video browser */}
       <div className="space-y-4">
-        <h1 className="text-3xl font-bold">Search Videos</h1>
-
         <div className="space-y-2">
           <label className="text-sm font-medium">Browse by creator</label>
           <select
@@ -285,13 +387,21 @@ export default function SearchPage() {
                 {transcribingAll ? (
                   <>
                     <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                    Transcribing {transcribeProgress}/{creatorVideos.length}...
+                    Transcribing {transcribeProgress}/{creatorVideos.filter(v => videoStatuses[v.id]?.status !== "completed").length}...
                   </>
-                ) : (
-                  `Transcribe All ${creatorVideos.length} Reels`
-                )}
+                ) : (() => {
+                  const untranscribedCount = creatorVideos.filter(v => videoStatuses[v.id]?.status !== "completed").length;
+                  return untranscribedCount > 0
+                    ? `Transcribe ${untranscribedCount} Reel${untranscribedCount !== 1 ? 's' : ''}`
+                    : "All Transcribed";
+                })()}
               </Button>
               <p className="text-xs text-muted-foreground">
+                {Object.values(videoStatuses).filter(s => s.status === "completed").length > 0 && (
+                  <span className="text-green-600 mr-2">
+                    {Object.values(videoStatuses).filter(s => s.status === "completed").length} already transcribed
+                  </span>
+                )}
                 or click <Plus className="inline h-3 w-3" /> on individual reels
               </p>
             </div>
@@ -304,69 +414,146 @@ export default function SearchPage() {
 
             {/* Video grid */}
             <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2">
-              {creatorVideos.map((video) => (
-                <div key={video.id} className="relative">
-                  <VideoCard videoUrl={video.videoUrl} thumbnailUrl={video.thumbnailUrl} />
-                  <button
-                    onClick={() => handleTranscribeSingle(video)}
-                    disabled={transcribingId === video.id || transcribingAll}
-                    className="absolute top-1 right-1 bg-black/70 hover:bg-black text-white rounded-full p-1 transition-opacity disabled:opacity-40"
-                    title="Transcribe this reel"
-                  >
-                    {transcribingId === video.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Plus className="h-3 w-3" />
+              {creatorVideos.map((video) => {
+                const videoStatus = videoStatuses[video.id];
+                const isTranscribed = videoStatus?.status === "completed";
+                const isProcessing = videoStatus?.status === "processing" || videoStatus?.status === "pending";
+
+                return (
+                  <div key={video.id} className="relative">
+                    <VideoCard videoUrl={video.videoUrl} thumbnailUrl={video.thumbnailUrl} />
+
+                    {/* Status indicator for already transcribed videos */}
+                    {isTranscribed && (
+                      <div
+                        className="absolute top-1 right-1 bg-green-500 text-white rounded-full p-1"
+                        title="Already transcribed"
+                      >
+                        <Check className="h-3 w-3" />
+                      </div>
                     )}
-                  </button>
-                </div>
-              ))}
+
+                    {/* Processing indicator */}
+                    {isProcessing && !isTranscribed && (
+                      <div
+                        className="absolute top-1 right-1 bg-yellow-500 text-white rounded-full p-1"
+                        title="Processing"
+                      >
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      </div>
+                    )}
+
+                    {/* Transcribe button for videos not yet transcribed */}
+                    {!isTranscribed && !isProcessing && (
+                      <button
+                        onClick={() => handleTranscribeSingle(video)}
+                        disabled={transcribingId === video.id || transcribingAll}
+                        className="absolute top-1 right-1 bg-black/70 hover:bg-black text-white rounded-full p-1 transition-opacity disabled:opacity-40"
+                        title="Transcribe this reel"
+                      >
+                        {transcribingId === video.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Plus className="h-3 w-3" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
       </div>
 
-      {/* Search bar */}
-      <form onSubmit={handleSearch} className="flex gap-2">
-        <Input
-          placeholder="Search by what was spoken in a video..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1"
-        />
-        <Button type="submit" disabled={searchLoading}>
-          {searchLoading ? "Searching..." : "Search"}
-        </Button>
-      </form>
+      {/* Ask Anything Interface */}
+      <div className="space-y-4">
+        {/* Input Bar */}
+        <form onSubmit={handleUnifiedSearch} className="flex gap-2 items-center">
+          <Input
+            placeholder="Ask Anything"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="flex-1 text-lg h-14"
+          />
+          <Button
+            type="submit"
+            disabled={isLoading}
+            className="h-14 px-8 text-lg"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Thinking
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4 mr-2" />
+                Ask
+              </>
+            )}
+          </Button>
+        </form>
 
-      {searchError && <p className="text-sm text-destructive">{searchError}</p>}
+        {/* Errors */}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </div>
 
-      {/* Search Results — thumbnail cards */}
-      {searchResults && (
+      {/* AI Answer */}
+      {aiAnswer && (
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Results ({searchResults.length})</h2>
-          {searchResults.length === 0 ? (
-            <p className="text-muted-foreground">No results found. Try a different search phrase.</p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
-              {searchResults.map((result, i) => (
-                <div key={i} className="space-y-1">
-                  <VideoCard
-                    videoUrl={result.video.videoUrl}
-                    thumbnailUrl={result.video.thumbnailUrl ?? ""}
-                  />
-                  <div className="flex items-center justify-between px-0.5">
-                    {result.creator && (
+          <div
+            className="p-8 rounded-2xl border-2 border-black shadow-lg"
+            style={{
+              background: "rgba(255, 255, 255, 0.9)",
+              backdropFilter: "blur(20px)",
+            }}
+          >
+            <p className="text-lg text-gray-900 whitespace-pre-wrap leading-relaxed font-sans">
+              {aiDisplayedAnswer.replace(/\*\*/g, '')}
+              {aiDisplayedAnswer.length < aiAnswer.length && (
+                <span className="inline-block w-1 h-5 bg-gray-900 ml-1 animate-pulse" />
+              )}
+            </p>
+          </div>
+
+          {searchResults && searchResults.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium text-muted-foreground">
+                Sources ({searchResults.length})
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                {searchResults.map((result, i) => (
+                  <div key={i} className="space-y-2 rounded-xl border bg-card p-2">
+                    <VideoCard
+                      videoUrl={result.video.videoUrl}
+                      thumbnailUrl={result.video.thumbnailUrl ?? ""}
+                    />
+                    <div className="flex items-center justify-between gap-2">
                       <p className="text-xs text-muted-foreground truncate">
-                        @{result.creator.handle}
+                        {result.creator ? `@${result.creator.handle}` : "Unknown creator"}
+                      </p>
+                      <Badge variant="outline" className="text-xs shrink-0">
+                        {(result.score * 100).toFixed(0)}%
+                      </Badge>
+                    </div>
+                    {result.transcript.firstTwoSentences && (
+                      <p className="max-h-20 overflow-hidden text-xs leading-5 text-foreground/80">
+                        {result.transcript.firstTwoSentences}
                       </p>
                     )}
-                    <Badge variant="outline" className="text-xs shrink-0">
-                      {(result.score * 100).toFixed(0)}%
-                    </Badge>
+                    {result.matchedTerms && result.matchedTerms.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {result.matchedTerms.slice(0, 4).map((term) => (
+                          <Badge key={term} variant="secondary" className="text-[10px]">
+                            {term}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </div>

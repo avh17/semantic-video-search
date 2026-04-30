@@ -21,7 +21,7 @@ export default async function DashboardLayout({
           <div className="container mx-auto flex h-14 items-center justify-between px-4">
             <nav className="flex items-center gap-6">
               <Link href="/dashboard" className="font-bold text-lg">
-                Search Brainrot
+                Semantic Video Search
               </Link>
               <Link
                 href="/dashboard"
