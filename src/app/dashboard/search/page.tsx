@@ -66,10 +66,26 @@ async function extractInstagramVideoUrl(reelUrl: string) {
   return data.videoUrl;
 }
 
+async function extractAudioBlob(mediaUrl: string) {
+  const res = await fetch("/api/extract-audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mediaUrl }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Audio extraction failed");
+  }
+
+  return res.blob();
+}
+
 export default function SearchPage() {
   const { userId } = useSession();
   const creators = useQuery(api.creators.list, { userId }) as Creator[] | undefined;
   const createVideo = useMutation(api.videos.create);
+  const generateUploadUrl = useMutation(api.ingestHelpers.generateUploadUrl);
   const processVideo = useAction(api.ingest.processVideo);
 
   const [selectedCreatorId, setSelectedCreatorId] = useState("");
@@ -177,6 +193,18 @@ export default function SearchPage() {
       }
     }
 
+    const audioBlob = await extractAudioBlob(directVideoUrl);
+    const uploadUrl = await generateUploadUrl();
+    const uploadRes = await fetch(uploadUrl, {
+      method: "POST",
+      headers: { "Content-Type": audioBlob.type || "audio/mpeg" },
+      body: audioBlob,
+    });
+    if (!uploadRes.ok) {
+      throw new Error("Failed to upload audio");
+    }
+    const { storageId } = (await uploadRes.json()) as { storageId: Id<"_storage"> };
+
     const videoId = await createVideo({
       creatorId: selectedCreatorId as Id<"creators">,
       userId,
@@ -189,7 +217,7 @@ export default function SearchPage() {
       videoId,
       userId,
       videoUrl: video.videoUrl,
-      audioUrl: directVideoUrl,
+      storageId,
       openaiApiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY || "",
     });
   }
@@ -250,6 +278,7 @@ export default function SearchPage() {
     try {
       const data = await postJson<{ answer: string; sources: SearchSource[] }>("/api/ask-question", {
         question: searchQuery,
+        creatorId: selectedCreatorId || undefined,
       });
       setAiAnswer(data.answer);
       setSearchResults(data.sources);
@@ -348,6 +377,7 @@ export default function SearchPage() {
             </div>
           </div>
         )}
+
       </div>
 
       <div className="space-y-4">

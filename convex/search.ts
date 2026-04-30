@@ -142,10 +142,11 @@ function scoreCandidate(
 export const searchVideos = action({
   args: {
     userId: v.id("users"),
+    creatorId: v.optional(v.id("creators")),
     queryText: v.string(),
     openaiApiKey: v.string(),
   },
-  handler: async (ctx, { userId, queryText, openaiApiKey }) => {
+  handler: async (ctx, { userId, creatorId, queryText, openaiApiKey }) => {
     const trimmedQuery = queryText.trim();
     if (!trimmedQuery) {
       return [];
@@ -153,6 +154,7 @@ export const searchVideos = action({
 
     const transcripts = (await ctx.runQuery(internal.searchHelpers.getAllUserTranscripts, {
       userId,
+      creatorId,
     })) as SearchCandidate[];
     if (!transcripts.length) {
       return [];

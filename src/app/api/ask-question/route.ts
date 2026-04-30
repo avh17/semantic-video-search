@@ -38,10 +38,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { question } = await request.json();
+    const { question, creatorId } = await request.json();
 
     if (!question || typeof question !== "string" || question.trim().length === 0) {
       return NextResponse.json({ error: "Question is required" }, { status: 400 });
+    }
+
+    if (creatorId && typeof creatorId !== "string") {
+      return NextResponse.json({ error: "creatorId must be a string" }, { status: 400 });
     }
 
     const openaiApiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
@@ -59,6 +63,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Retrieve the strongest transcript matches.
     const searchAction = (await convex.action(api.search.searchVideos, {
       userId: userId as Id<"users">,
+      creatorId: creatorId as Id<"creators"> | undefined,
       queryText: question,
       openaiApiKey,
     })) as SearchActionResult[];

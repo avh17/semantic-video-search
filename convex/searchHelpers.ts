@@ -2,7 +2,10 @@ import { v } from "convex/values";
 import { internalQuery, query } from "./_generated/server";
 
 export const getAllUserTranscripts = internalQuery({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    creatorId: v.optional(v.id("creators")),
+  },
   handler: async (ctx, args) => {
     const transcripts = await ctx.db
       .query("transcripts")
@@ -13,6 +16,7 @@ export const getAllUserTranscripts = internalQuery({
       transcripts.map(async (transcript) => {
         const video = await ctx.db.get(transcript.videoId);
         if (!video) return null;
+        if (args.creatorId && video.creatorId !== args.creatorId) return null;
 
         const creator = await ctx.db.get(video.creatorId);
 
