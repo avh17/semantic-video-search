@@ -12,6 +12,9 @@ This app fetches a creator's reels, transcribes them with OpenAI Whisper, stores
 - Ask questions and get answers with source videos
 - Keep video and transcript data scoped to the signed-in user
 
+  <img width="2700" height="1050" alt="image" src="https://github.com/user-attachments/assets/69d69c1a-98c8-4b91-b280-40525f107d8e" />
+  <img width="2700" height="1610" alt="image" src="https://github.com/user-attachments/assets/d2427a09-8104-4856-9f08-442233dfc265" />
+
 ## Stack
 
 - Next.js
