@@ -1,5 +1,7 @@
 # Semantic Video Search
 
+https://semantic-video-search-rouge.vercel.app
+
 Search Instagram reels by what was said in the video.
 
 This app fetches a creator's reels, transcribes them with OpenAI Whisper, stores the transcript and embedding in Convex, and lets you search or ask questions against that content.
