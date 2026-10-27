@@ -104,7 +104,8 @@ test("an empty reels feed is a successful empty result", async () => {
 
 for (const [status, message] of [
   [401, "Invalid ScrapeCreators API key"],
-  [404, "Could not find reels for @baxate"],
+  [402, "ScrapeCreators is out of credits"],
+  [404, "Could not load reels for @baxate. ScrapeCreators: upstream error"],
   [429, "ScrapeCreators rate limit exceeded"],
 ] as const) {
   test(`preserves actionable upstream ${status} errors`, async () => {
@@ -114,6 +115,27 @@ for (const [status, message] of [
     expect((await response.json()).error).toContain(message);
   });
 }
+
+test("keeps the provider's explanation of an unavailable profile", async () => {
+  globalThis.fetch = async () => Response.json({
+    error: "not_found", message: "Profile is unavailable on Instagram",
+  }, { status: 404 });
+  const response = await POST(request());
+  expect(response.status).toBe(404);
+  expect((await response.json()).error).toContain("ScrapeCreators: Profile is unavailable on Instagram");
+});
+
+test("does not expose HTML error pages or API keys in provider explanations", async () => {
+  globalThis.fetch = async () => new Response("<html>Not found</html>", { status: 404 });
+  const htmlResponse = await POST(request());
+  expect((await htmlResponse.json()).error).not.toContain("<html>");
+
+  globalThis.fetch = async () => Response.json({ message: "Unknown key test-api-key" }, { status: 404 });
+  const keyResponse = await POST(request());
+  const error = (await keyResponse.json()).error;
+  expect(error).not.toContain("test-api-key");
+  expect(error).toContain("[redacted]");
+});
 
 test("a missing key is reported without contacting the provider", async () => {
   delete process.env.SCRAPECREATORS_API_KEY;

@@ -63,6 +63,12 @@ export async function POST(request: NextRequest) {
           { status: 401 }
         );
       }
+      if (response.status === 402) {
+        return NextResponse.json(
+          { error: "ScrapeCreators is out of credits. Add credits at app.scrapecreators.com to load reels." },
+          { status: 402 }
+        );
+      }
       if (response.status === 429) {
         return NextResponse.json(
           { error: "ScrapeCreators rate limit exceeded. Wait a moment or upgrade your plan." },
@@ -70,8 +76,9 @@ export async function POST(request: NextRequest) {
         );
       }
       if (response.status === 404) {
+        const reason = getProviderErrorMessage(text, apiKey);
         return NextResponse.json(
-          { error: `Could not find reels for @${cleanHandle}.` },
+          { error: `Could not load reels for @${cleanHandle}.${reason ? ` ScrapeCreators: ${reason}` : " The profile may be unavailable or inaccessible to ScrapeCreators."}` },
           { status: 404 }
         );
       }
@@ -89,6 +96,19 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Fetch creator videos error:", error);
     return NextResponse.json({ error: "Failed to fetch creator videos" }, { status: 500 });
+  }
+}
+
+function getProviderErrorMessage(text: string, apiKey: string): string | undefined {
+  try {
+    const data: unknown = JSON.parse(text);
+    if (!data || typeof data !== "object") return undefined;
+    const { message, error } = data as { message?: unknown; error?: unknown };
+    const reason = typeof message === "string" ? message : typeof error === "string" ? error : undefined;
+    // Expose only a bounded provider message, never an HTML page or credentials.
+    return reason?.replaceAll(apiKey, "[redacted]").slice(0, 300);
+  } catch {
+    return undefined;
   }
 }
 
