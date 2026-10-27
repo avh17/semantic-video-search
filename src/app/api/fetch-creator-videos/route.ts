@@ -7,7 +7,7 @@ type VideoResult = {
   directVideoUrl?: string;
 };
 
-const SCRAPECREATORS_PROFILE_URL = "https://api.scrapecreators.com/v1/instagram/profile";
+const SCRAPECREATORS_REELS_URL = "https://api.scrapecreators.com/v1/instagram/user/reels";
 
 /**
  * Uses the ScrapeCreators API to fetch a creator's recent reels.
@@ -38,11 +38,11 @@ export async function POST(request: NextRequest) {
     }
 
     const cleanHandle = handle.replace("@", "");
-    const url = new URL(SCRAPECREATORS_PROFILE_URL);
-    // ScrapeCreators profile endpoint expects `handle` without the @ per docs.
+    const url = new URL(SCRAPECREATORS_REELS_URL);
+    // The profile endpoint returns profile metadata, not the creator's reels feed.
     url.searchParams.set("handle", cleanHandle);
-    // Asking for clips ensures reels/clips data is prioritised when available.
-    url.searchParams.set("section", "clips");
+    // Keep the full items[].media shape, including thumbnails and video_versions.
+    url.searchParams.set("trim", "false");
 
     const response = await fetch(url.toString(), {
       method: "GET",
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      console.error("ScrapeCreators profile error:", response.status, text);
+      console.error("ScrapeCreators reels error:", response.status, text);
       if (response.status === 401) {
         return NextResponse.json(
           { error: "Invalid ScrapeCreators API key. Check SCRAPECREATORS_API_KEY in .env.local." },
@@ -157,11 +157,12 @@ function toVideoResult(media: any): VideoResult | null {
 
   const pk = media.pk ?? media.id ?? media.media_id ?? media.code ?? Math.random();
   const code = media.code ?? media.shortcode;
-  const permalink = media.permalink ?? media.link;
+  const permalink = media.permalink ?? media.link ?? media.url;
   const thumbnailCandidates = [
     media.thumbnail_url,
     media.thumbnail_src,
     media.display_url,
+    media.display_uri,
     media.cover_image,
     media.image_versions2?.candidates?.[0]?.url,
     media.carousel_media?.[0]?.image_versions2?.candidates?.[0]?.url,

@@ -30,6 +30,6 @@
 
 ## External APIs & Configuration
 - Populate `.env.local` with `CONVEX_DEPLOYMENT`, `NEXT_PUBLIC_CONVEX_URL`, `OPENAI_API_KEY`, `NEXT_PUBLIC_OPENAI_API_KEY`, and `NEXT_PUBLIC_APP_URL`; never commit the file.
-- Instagram browsing now uses the ScrapeCreators profile API via `/api/fetch-creator-videos`, so the only required key is `SCRAPECREATORS_API_KEY`. Per the docs, always send the creator `handle` (no `@`) and request the `clips` section to grab the top ~10 reels. Missing keys bubble clear errors in the creators/search pages to avoid silent failures.
+- Instagram browsing uses the ScrapeCreators reels API (`GET /v1/instagram/user/reels`) via `/api/fetch-creator-videos`, with `SCRAPECREATORS_API_KEY`. Send the creator `handle` (no `@`) and `trim=false` for the full `items[].media` response, then return the top ~10 reels. The profile endpoint and `section=clips` do not provide the reels feed. Missing keys bubble clear errors in the creators/search pages to avoid silent failures.
 - Direct reel downloads use ScrapeCreators via `/api/extract-instagram-video`; set `SCRAPECREATORS_API_KEY` to avoid 401/500 responses during ingestion.
 - Convex tables/indexes must filter on `userId`; keep that guardrail for any new data to prevent cross-user transcript leaks.
